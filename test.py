@@ -1,132 +1,155 @@
-import glob
-import io
-import os
 import sys
-import time
+import numpy as np
 
-from tsptw import cp, mip, greedy, local_search
+def ACO(N, e, l, d, c, alpha=1, beta=1, rho=0.1, Q=1000, max_no_improvements=100):
+    e = np.array(e)
+    l = np.array(l)
+    d = np.array(d)
+    c = np.array(c)
 
-STRATEGIES = {
-    "Greedy":        lambda nodes, e, l, d, c: greedy(nodes, e, l, d, c, mode=3),
-    "Local Search":  lambda nodes, e, l, d, c: local_search(nodes, e, l, d, c),
-    "CP-SAT":        lambda nodes, e, l, d, c: cp(nodes, e, l, d, c),
-    "MIP (SCIP)":    lambda nodes, e, l, d, c: mip(nodes, e, l, d, c),
-    # "ACO Meta":    lambda nodes, e, l, d, c: aco(nodes, e, l, d, c), <-- Adding a new way is this easy!
-}
+    A = (e + d)[:, None] + c <= l
+    pheromone = np.ones((N + 1, N + 1))
 
-def parse_input_from_string(raw_data):
-    inp = raw_data.strip().splitlines()
-    if not inp:
-        return
+    best_route = None
+    best_cost = float('inf')
+    
+    m = min(50, N)
+    not_improved = 0
 
-    N = int(inp[0])
-    nodes = [i for i in range(N + 1)]
-    e = [0]      # Node 0 is the depot, so its earliest time is 0
-    l = [99999]  # Node 0 is the depot, so its latest time can be set to infinity
-    d = [0]      # Node 0 is the depot, so its service time is 0
-    c = []
-
-    for i in range(N):
-        e_i, l_i, d_i = inp[i + 1].split()
-        e.append(int(e_i))
-        l.append(int(l_i))
-        d.append(int(d_i))
-
-    for i in nodes:
-        c.append([int(x) for x in inp[i + N + 1].split()])
-
-    return N, nodes, e, l, d, c
-
-def run_batch_tests():
-    file_paths = sorted(glob.glob(os.path.join("test_cases", "*.txt")))
-    if not file_paths:
-        print("No test files found in 'test_cases/'.")
-        return
-
-    algo_names = list(STRATEGIES.keys())
-    all_results = []
-
-    print("=" * 60)
-    print("PHASE 1: DATA COLLECTION")
-    print("=" * 60)
-
-    # --- PHASE 1: Execution and Storage ---
-    for path in file_paths:
-        file_name = os.path.basename(path)
+    while not_improved < max_no_improvements:
+        not_improved += 1
         
-        with open(path, "r") as file:
-            file_content = file.read()
-        
-        original_stdin = sys.stdin
-        sys.stdin = io.StringIO(file_content)
-        raw_data = sys.stdin.read()
-        sys.stdin = original_stdin
-        
-        n, nodes, e, l, d, c = parse_input_from_string(raw_data)
-        
-        print(f"Crunching {file_name} (N={n})...")
-        
-        # Create a dictionary to store the metrics for this specific file
-        file_data = {
-            "file_name": file_name,
-            "n": n,
-            "costs": {},
-            "times": {}
-        }
-        
-        for name, algo_func in STRATEGIES.items():
-            try:
-                # Start the high-precision timer
-                start_time = time.perf_counter()
-                cost, route = algo_func(nodes, e, l, d, c)
-                end_time = time.perf_counter()
+        for ants in range(m):
+            visited = np.zeros(N + 1, dtype=bool)
+            visited[0] = True
+            
+            route = [0]
+            i = 0
+            time = 0
+            L = 0
+
+            for _ in range(N):
+                feasible_nodes = np.flatnonzero(A[i, :] & ~visited)
+                arrival = time + d[i] + c[i, feasible_nodes]
                 
-                elapsed = end_time - start_time
+                valid_mask = arrival <= l[feasible_nodes]
+                feasible_nodes = feasible_nodes[valid_mask]
+                arrival = arrival[valid_mask]
+
+                if len(feasible_nodes) == 0:
+                    break
+
+                start = np.maximum(arrival, e[feasible_nodes])
+                finish = start + d[feasible_nodes]
+                wait = start - arrival
+                slack = np.maximum(0, l[feasible_nodes] - finish)
+
+                H = np.maximum(0, wait + slack + c[i, feasible_nodes])
+                eta = 1 / (H + 1e-6)
+
+                pheromone_level = pheromone[i, feasible_nodes] ** alpha
+                heuristic_level = eta ** beta
                 
-                if route is None or len(route) == 0 or cost == float('inf'):
-                    file_data["costs"][name] = "Infeasible"
-                    file_data["times"][name] = f"{elapsed:.4f}"
+                p_num = pheromone_level * heuristic_level
+                p_num = np.nan_to_num(p_num, nan=0.0, posinf=0.0, neginf=0.0)
+                p_den = np.sum(p_num)
+                
+                if p_den <= 0:
+                    idx = np.random.choice(len(feasible_nodes))
                 else:
-                    file_data["costs"][name] = f"{cost:.1f}"
-                    file_data["times"][name] = f"{elapsed:.4f}"
-                    
-            except Exception as err:
-                # Catches Out of Memory (OOM) or other solver crashes
-                file_data["costs"][name] = "Crash/OOM"
-                file_data["times"][name] = "N/A"
+                    p = p_num / p_den
+                    idx = np.random.choice(len(feasible_nodes), p=p)
                 
-        all_results.append(file_data)
+                j = feasible_nodes[idx]
+                s = start[idx]
+                cost = c[i, j]
+
+                time = s
+                i = j
+                L += cost
+                
+                route.append(j)
+                visited[j] = True
+                
+            else:
+                L += c[i, 0]
+
+                route = np.array(route)
+                from_nodes = route[:-1]
+                to_nodes = route[1:]
+                
+                pheromone[from_nodes, to_nodes] += Q / L
+                pheromone[to_nodes, from_nodes] += Q / L
+
+                if L < best_cost:
+                    best_route = route[1:]
+                    best_cost = L
+                    not_improved = 0
+
+        pheromone *= (1 - rho)
         
-    print("\nEvaluations complete. Generating tables...\n")
+        if best_route is not None:
+            elite_route = np.concatenate(([0], best_route, [0]))
+            e_from = elite_route[:-1]
+            e_to = elite_route[1:]
+            pheromone[e_from, e_to] += Q / best_cost
+            pheromone[e_to, e_from] += Q / best_cost
 
-    # --- PHASE 2: Table Generation ---
-    # Dynamically build the header layout
-    header = f"{'File Name':<15} | {'N':<5} | " + " | ".join([f"{name:<12}" for name in algo_names])
-    divider = "=" * len(header)
-    sub_divider = "-" * len(header)
+    return best_route, best_cost
 
-    # Print Table 1: Solution Costs
-    print(divider)
-    print("TABLE 1: SOLUTION COSTS".center(len(header)))
-    print(divider)
-    print(header)
-    print(sub_divider)
-    for res in all_results:
-        row = [f"{res['costs'][name]:<12}" for name in algo_names]
-        print(f"{res['file_name']:<15} | {res['n']:<5} | " + " | ".join(row))
-    print(divider + "\n")
+def solve_vrptw_auto_tuned():
+    input_data = sys.stdin.read().split()
+    if not input_data:
+        return
+        
+    N = int(input_data[0])
+    
+    e_list = [0]
+    l_list = [10**9]
+    d_list = [0]
+    
+    for i in range(1, 1 + N * 3, 3):
+        e_list.append(int(input_data[i]))
+        l_list.append(int(input_data[i+1]))
+        d_list.append(int(input_data[i+2]))
+        
+    e = np.array(e_list)
+    l = np.array(l_list)
+    d = np.array(d_list)
+    
+    idx = 1 + N * 3
+    c_list = []
+    for _ in range(N + 1):
+        c_list.append([int(input_data[i]) for i in range(idx, idx + N + 1)])
+        idx += (N + 1)
+    c = np.array(c_list)
+    
+    l[0] = max(l[i] + d[i] + c[i][0] for i in range(1, N + 1))
 
-    # Print Table 2: Computation Times
-    print(divider)
-    print("TABLE 2: COMPUTATION TIMES (Seconds)".center(len(header)))
-    print(divider)
-    print(header)
-    print(sub_divider)
-    for res in all_results:
-        row = [f"{res['times'][name]:<12}" for name in algo_names]
-        print(f"{res['file_name']:<15} | {res['n']:<5} | " + " | ".join(row))
-    print(divider)
-
+    candidate_params = [
+        {'alpha': 1.0, 'beta': 2.0},
+        {'alpha': 1.0, 'beta': 5.0},
+        {'alpha': 2.0, 'beta': 1.0},
+        {'alpha': 1.5, 'beta': 3.0}
+    ]
+    
+    best_alpha = 1.0
+    best_beta = 2.0
+    best_test_cost = float('inf')
+    
+    for params in candidate_params:
+        cost, _ = ACO(N, e, l, d, c, alpha=params['alpha'], beta=params['beta'], max_no_improvements=2)
+        if cost < best_test_cost:
+            best_test_cost = cost
+            best_alpha = params['alpha']
+            best_beta = params['beta']
+            
+    final_cost, final_route = ACO(N, e, l, d, c, alpha=best_alpha, beta=best_beta, max_no_improvements=50)
+    
+    print(N)
+    for i in final_route:
+        print(i, end=' ')
+    print()
 
 if __name__ == "__main__":
-    run_batch_tests()
+    solve_vrptw_auto_tuned()

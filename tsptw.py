@@ -279,7 +279,7 @@ def ACO(N, e, l, d, c, alpha=1, beta=1, evaporation_rate=0.5):
     best_route = None
     not_improved = 0
 
-    while not_improved < 100:
+    while not_improved < N * 10:
         not_improved += 1
         
         for ants in range(m):
@@ -331,6 +331,7 @@ def ACO(N, e, l, d, c, alpha=1, beta=1, evaporation_rate=0.5):
                 visited[j] = True
                 
             else:
+                L += c[i, 0]
                 route = np.array(route)
                 from_nodes = route[:-1]
                 to_nodes = route[1:]

@@ -42,15 +42,12 @@ def feasible(route, e, l, d, c, start_idx, known_time, known_cost, best_cost):
     curr_time = known_time
     curr_cost = known_cost
     
-    # If starting at index 0, the previous node is the depot (0)
-    # Otherwise, the previous node is the customer just before start_idx
     curr_node = route[start_idx - 1] if start_idx > 0 else 0
 
     for idx in range(start_idx, len(route)):
         node = route[idx]
         arrival = curr_time + c[curr_node][node]
         
-        # 1. Early Exit: Timeline Violation
         if arrival > l[node]:
             return False, float('inf')
             
@@ -58,13 +55,12 @@ def feasible(route, e, l, d, c, start_idx, known_time, known_cost, best_cost):
         curr_time = start + d[node]
         curr_cost += c[curr_node][node]
         
-        # 2. Early Exit: Cost is already worse than our best route
         if curr_cost >= best_cost:
             return False, float('inf')
             
         curr_node = node
     
-    curr_cost += c[curr_node][0] # Return to depot
+    curr_cost += c[curr_node][0]
 
     if curr_cost < best_cost:
         return True, curr_cost
@@ -83,7 +79,6 @@ def LocalSearch(N, e, l, d, c):
     while improvement_found:
         improvement_found = False
         
-        # Cache the timeline and accumulated cost of the best_route so we don't have to start from index 0 every time.
         departure_times = [0] * num_nodes
         accumulated_costs = [0] * num_nodes
         
@@ -101,7 +96,6 @@ def LocalSearch(N, e, l, d, c):
             prev = node
 
         for i in range(0, num_nodes - 1):
-            # Get the exact time and cost right before index i
             known_time = departure_times[i-1] if i > 0 else 0
             known_cost = accumulated_costs[i-1] if i > 0 else 0
             
@@ -109,7 +103,6 @@ def LocalSearch(N, e, l, d, c):
                 neighbor_route = best_route.copy()
                 neighbor_route[i], neighbor_route[j] = neighbor_route[j], neighbor_route[i]
                 
-                # Start simulation at index 'i' instead of 0
                 feasibility, new_cost = feasible(
                     neighbor_route, e, l, d, c, 
                     start_idx=i, 
@@ -122,7 +115,7 @@ def LocalSearch(N, e, l, d, c):
                     best_route = neighbor_route
                     best_cost = new_cost
                     improvement_found = True
-                    break # First-improvement strategy
+                    break 
             
             if improvement_found:
                 break

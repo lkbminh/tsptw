@@ -6,9 +6,6 @@ def ALNS(N, e, l, d, c, max_no_improvements=300):
     # Convert all inputs to NumPy arrays for C-level speed
     e, l, d, c = map(np.array, (e, l, d, c))
     
-    # ---------------------------------------------------------
-    # 1. Fast Evaluation (UPDATED: Soft Penalty & Feasibility)
-    # ---------------------------------------------------------
     def evaluate_route(route):
         if not route:
             return float('inf'), False
@@ -29,27 +26,10 @@ def ALNS(N, e, l, d, c, max_no_improvements=300):
             
         is_feasible = (total_violation == 0)
         
-        # Soft penalty: Allows the algorithm to explore slightly broken 
-        # routes to find massive shortcuts.
         penalized_cost = total_travel + (total_violation * 1000)
             
         return penalized_cost, is_feasible
     
-    def _feasible_with_insertion(route, node, pos):
-        """O(n) forward sim, returns False as soon as a TW is violated."""
-        seq = [0] + route[:pos] + [node] + route[pos:] + [0]
-        t = 0.0
-        for i in range(len(seq) - 1):
-            u, v = seq[i], seq[i+1]
-            arr = t + d[u] + c[u, v]
-            if arr > l[v]:
-                return False
-            t = max(arr, e[v])
-        return True
-
-    # ---------------------------------------------------------
-    # 2. Vectorized Destroy Operators
-    # ---------------------------------------------------------
     def destroy_random(route, q):
         removed = np.random.choice(route, q, replace=False).tolist()
         new_route = [x for x in route if x not in removed]
@@ -77,9 +57,6 @@ def ALNS(N, e, l, d, c, max_no_improvements=300):
         new_route = [x for x in route if x not in worst_nodes]
         return new_route, removed
 
-    # ---------------------------------------------------------
-    # 3. Vectorized Repair Operators
-    # ---------------------------------------------------------
     def repair_greedy(route, unassigned):
         for node in unassigned:
             prev_n = np.array([0] + route)
@@ -94,20 +71,15 @@ def ALNS(N, e, l, d, c, max_no_improvements=300):
                 curr_time = max(curr_time, e[p]) + d[p] + c[p, curr]
                 times_prev[i] = curr_time
                 
-            # 2. Vectorized Time Penalty Calculation
-            # Arrival at the newly inserted 'node'
             arr_node = np.maximum(times_prev, e[prev_n]) + d[prev_n] + c[prev_n, node]
             viol_node = np.maximum(0, arr_node - l[node])
             
-            # Arrival at 'next_n' after visiting 'node'
             start_node = np.maximum(arr_node, e[node])
             arr_next = start_node + d[node] + c[node, next_n]
             viol_next = np.maximum(0, arr_next - l[next_n])
             
-            # Apply the soft penalty (matching your evaluate_route function)
-            time_penalty = (viol_node + viol_next) * N
+            time_penalty = (viol_node + viol_next) * 1000
             
-            # 3. Add penalty to spatial deltas
             deltas = c[prev_n, node] + c[node, next_n] - c[prev_n, next_n] + time_penalty
             
             best_idx = np.argmin(deltas)
@@ -121,7 +93,6 @@ def ALNS(N, e, l, d, c, max_no_improvements=300):
             next_n = np.array(route + [0])
             U = np.array(unassigned)
             
-            # 1. Calculate current arrival times at each node in prev_n
             times_prev = np.zeros(len(prev_n))
             curr_time = 0.0
             for i in range(1, len(prev_n)):
@@ -130,33 +101,27 @@ def ALNS(N, e, l, d, c, max_no_improvements=300):
                 curr_time = max(curr_time, e[p]) + d[p] + c[p, curr]
                 times_prev[i] = curr_time
                 
-            # Expand dimensions to prepare for 2D Matrix Broadcasting
             times_prev_exp = times_prev[:, None]
             e_prev = e[prev_n][:, None]
             d_prev = d[prev_n][:, None]
             l_next = l[next_n][:, None]
             
-            # Spatial Distance Matrices
             c_prev_u = c[prev_n[:, None], U[None, :]] 
             c_u_next = c[U[None, :], next_n[:, None]] 
             c_prev_next = c[prev_n, next_n][:, None]
             
-            # 2. Vectorized Time Penalty Calculation for ALL unassigned nodes simultaneously
-            # Arrival at unassigned nodes (U)
+
             arr_U = np.maximum(times_prev_exp, e_prev) + d_prev + c_prev_u
             viol_U = np.maximum(0, arr_U - l[U][None, :])
             
-            # Arrival at next_n
             start_U = np.maximum(arr_U, e[U][None, :])
             arr_next = start_U + d[U][None, :] + c_u_next
             viol_next = np.maximum(0, arr_next - l_next)
             
             time_penalty = (viol_U + viol_next) * N
             
-            # 3. Add penalty to spatial deltas
             deltas = c_prev_u + c_u_next - c_prev_next + time_penalty
             
-            # Regret Calculation
             if deltas.shape[0] >= 2:
                 sorted_2 = np.partition(deltas, 1, axis=0)[:2, :]
                 regrets = sorted_2[1, :] - sorted_2[0, :]
@@ -178,9 +143,6 @@ def ALNS(N, e, l, d, c, max_no_improvements=300):
             route.insert(insert_idx, node)
         return route
 
-    # ---------------------------------------------------------
-    # 4. ALNS Initialization
-    # ---------------------------------------------------------
     destroy_ops = [destroy_random, destroy_segment, destroy_worst]
     repair_ops = [repair_greedy, repair_regret_2, repair_random]
     
@@ -193,12 +155,9 @@ def ALNS(N, e, l, d, c, max_no_improvements=300):
     else:
         current_route = temp_route
 
-    # Re-evaluate the starting route through the new evaluation logic
     current_cost, _ = evaluate_route(current_route)
     best_route, best_cost = current_route[:], current_cost
-    
-    # UPDATED: Dynamic Initial Temperature
-    # Calibrated so a solution 10% worse has a 60% chance of acceptance initially
+
     T = -(current_cost * 0.1) / math.log(0.6) if current_cost > 0 else 10000.0
     
     cooling_rate = 0.995
@@ -210,9 +169,6 @@ def ALNS(N, e, l, d, c, max_no_improvements=300):
     SCORE_ACCEPTED = 13
     DECAY = 0.8
 
-    # ---------------------------------------------------------
-    # 5. Main Loop (UPDATED: Feasibility Checks)
-    # ---------------------------------------------------------
     while not_improved < max_no_improvements:
         p_d = w_d / w_d.sum()
         p_r = w_r / w_r.sum()
@@ -223,12 +179,10 @@ def ALNS(N, e, l, d, c, max_no_improvements=300):
         temp_route, removed_nodes = destroy_ops[d_idx](current_route[:], q_size)
         new_route = repair_ops[r_idx](temp_route, removed_nodes)
         
-        # Unpack cost and feasibility
         new_cost, is_feasible = evaluate_route(new_route)
 
         score = 0
         
-        # ONLY save as best if it is 100% legal
         if new_cost < best_cost and is_feasible:
             best_cost = new_cost
             best_route = new_route[:]
@@ -256,8 +210,6 @@ def ALNS(N, e, l, d, c, max_no_improvements=300):
         
         T *= cooling_rate
 
-    # Best_cost currently holds the penalized cost. 
-    # If it's feasible, the penalty is 0, so it equals the true distance.
     return best_route, best_cost
 
 
@@ -280,7 +232,7 @@ def greedy(N, e, l, d, c):
                     wait = start - arrival
                     slack = l[j] - arrival
 
-                    H = c[i][j] + wait + 0.35 * slack  # Example heuristic function
+                    H = c[i][j] + wait + 0.35 * slack  
                     candidates.append((H, j, start, finish))
             
         if not candidates:
@@ -295,14 +247,10 @@ def greedy(N, e, l, d, c):
         route.append(j)
         visited[j] = 1
 
-    cost += c[i][0] #Back to depot
+    cost += c[i][0] 
 
     return route, cost
 
-
-# ---------------------------------------------------------
-# aco.py Style Main Function
-# ---------------------------------------------------------
 def main():
     inp = sys.stdin.read().strip().splitlines()
     if not inp:
@@ -321,10 +269,8 @@ def main():
     for i in range(N + 1):
         c.append([int(x) for x in inp[i + N + 1].split()])
 
-    # Dynamically adjust l[0] based on furthest possible return trip
     l[0] = max(l[i] + d[i] + c[i][0] for i in range(1, N + 1))
 
-    # Run the solver
     route, cost = ALNS(N, e, l, d, c, max_no_improvements=100)
     
     print(N)

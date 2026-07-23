@@ -12,7 +12,6 @@ def ACO(N, e, l, d, c, alpha=1, beta=2, rho=0.1, Q=1.0, max_no_improvements=50):
         best_route = temp_route
         best_cost = temp_cost
 
-    # Fallback if greedy fails to find a valid route
     if best_cost == float('inf'):
         tau_max, tau_min = 1.0, 0.01 
     else:
@@ -30,7 +29,6 @@ def ACO(N, e, l, d, c, alpha=1, beta=2, rho=0.1, Q=1.0, max_no_improvements=50):
     not_improved = 0
     iterations = 0
 
-    # Fixed loop condition to actually use the parameter
     while not_improved < max_no_improvements:
         iterations += 1
         not_improved += 1
@@ -67,7 +65,6 @@ def ACO(N, e, l, d, c, alpha=1, beta=2, rho=0.1, Q=1.0, max_no_improvements=50):
                 if p_den <= 0:
                     idx = np.random.randint(len(feasible_nodes))
                 else:
-                    # FIX: Force exact probability sum of 1.0 to prevent np.random.choice ValueError
                     p = p_num / p_den
                     p = p / p.sum() 
                     idx = np.random.choice(len(feasible_nodes), p=p)
@@ -94,7 +91,6 @@ def ACO(N, e, l, d, c, alpha=1, beta=2, rho=0.1, Q=1.0, max_no_improvements=50):
                     not_improved = 0
                     tau_max, tau_min = update_bounds(best_cost, rho, N)  
 
-        # FIX: Evaporate FIRST, then deposit, then clip
         pheromone *= (1 - rho)                                           
         
         # Elitist deposit using Q
@@ -132,7 +128,7 @@ def greedy(N, e, l, d, c):
                     wait = start - arrival
                     slack = l[j] - arrival
 
-                    H = c[i][j] + wait + 0.35 * slack  # Example heuristic function
+                    H = c[i][j] + wait + 0.35 * slack  
                     candidates.append((H, j, start, finish))
             
         if not candidates:
@@ -147,7 +143,7 @@ def greedy(N, e, l, d, c):
         route.append(j)
         visited[j] = 1
 
-    cost += c[i][0] #Back to depot
+    cost += c[i][0]
 
     return route, cost
 
@@ -181,7 +177,6 @@ def main():
     
     l[0] = max(l[i] + d[i] + c[i][0] for i in range(1, N + 1))
 
-    # FIX: Was calling 'hybrid_ACO' instead of 'ACO'
     route, cost = ACO(N, e, l, d, c, alpha=1, beta=2, rho=0.1, max_no_improvements=100)
     
     print(N)

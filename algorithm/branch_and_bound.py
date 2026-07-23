@@ -12,7 +12,6 @@ def BranchAndBound(N, e, l, d, c):
     visited = [False] * (N + 1)
     route = []
 
-    # Recursive backtracking function
     def backtrack(level, curr, time, cost):
         nonlocal best_cost, best_route
 
@@ -20,7 +19,6 @@ def BranchAndBound(N, e, l, d, c):
         if cost + (remaining * min_edge) >= best_cost:
             return
 
-        # Base Case: All customers visited, return to depot (0)
         if level == N:
             total_cost = cost + c[curr][0]
             if total_cost < best_cost:
